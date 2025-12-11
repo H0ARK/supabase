@@ -44,7 +44,7 @@ Check updates for each service to learn more.
 
 ### Logflare
 
-- Updated to `1.26.25` - [Release](https://github.com/Logflare/logflare/releases/tag/v1.26.25)
+- Updated to `v1.26.25` - [Release](https://github.com/Logflare/logflare/releases/tag/v1.26.25)
 
 ---
 
@@ -52,8 +52,8 @@ Check updates for each service to learn more.
 
 ### Realtime
 - No image update
-- Changed boolean values to strings in Docker Compose for better compatibility with Podman - PR [#40994](https://github.com/supabase/supabase/pull/40994), also PR [realtime#1614](https://github.com/supabase/realtime/pull/1614)
-- Changed healthcheck in Docker Compose for better compatibility with Podman - PR [#41159](https://github.com/supabase/supabase/pull/41159)
+- Changed boolean values to strings for better compatibility with Podman (requires `docker-compose.yml` update) - PR [#40994](https://github.com/supabase/supabase/pull/40994), also PR [realtime#1614](https://github.com/supabase/realtime/pull/1614)
+- Changed healthcheck for better compatibility with Podman (requires `docker-compose.yml` update) - PR [#41159](https://github.com/supabase/supabase/pull/41159)
 
 ---
 

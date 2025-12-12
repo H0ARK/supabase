@@ -121,14 +121,6 @@ type SaveTableConfiguration = {
   primaryKey?: Constraint
 }
 
-type GeneratedPolicy = {
-  name: string
-  definition?: string | null
-  check?: string | null
-  command?: string | null
-  roles?: string[]
-}
-
 const getDefaultApiPrivileges = (): ApiPrivilegesPerRole => ({
   anon: [...API_PRIVILEGE_TYPES] as ApiPrivilegeType[],
   authenticated: [...API_PRIVILEGE_TYPES] as ApiPrivilegeType[],

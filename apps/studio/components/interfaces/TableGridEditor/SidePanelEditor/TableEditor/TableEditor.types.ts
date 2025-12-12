@@ -8,12 +8,7 @@ export type ApiAccessRole = 'anon' | 'authenticated'
 
 export const API_ACCESS_ROLES: ApiAccessRole[] = ['anon', 'authenticated']
 
-export const API_PRIVILEGE_TYPES: ApiPrivilegeType[] = [
-  'SELECT',
-  'INSERT',
-  'UPDATE',
-  'DELETE',
-]
+export const API_PRIVILEGE_TYPES: ApiPrivilegeType[] = ['SELECT', 'INSERT', 'UPDATE', 'DELETE']
 
 export type ApiPrivilegesPerRole = {
   anon: ApiPrivilegeType[]

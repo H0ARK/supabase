@@ -27,7 +27,7 @@ Check updates for each service to learn more.
 
 ### PostgREST
 
-- Updated to `v14.1` - [Changelog](https://github.com/PostgREST/postgrest/blob/main/CHANGELOG.md) | [Release](https://github.com/PostgREST/postgrest/releases/tag/v14.1)
+- Updated to `v14.1` - [Discussion](https://github.com/orgs/supabase/discussions/41288) | [Changelog](https://github.com/PostgREST/postgrest/blob/main/CHANGELOG.md) | [Release](https://github.com/PostgREST/postgrest/releases/tag/v14.1)
 - ⚠️ **Major upgrade from v13.x to v14.x** - please report any unexpected behavior
 
 ### Realtime

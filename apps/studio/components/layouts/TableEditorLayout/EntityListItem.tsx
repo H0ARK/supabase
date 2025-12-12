@@ -468,7 +468,7 @@ const EntityTooltipTrigger = ({
         <TooltipTrigger className="min-w-4">
           <Badge variant="destructive">Unrestricted</Badge>
         </TooltipTrigger>
-        <TooltipContent side="right" className="max-w-52 text-center">
+        <TooltipContent side="right" className="max-w-52">
           {tooltipContent}
         </TooltipContent>
       </Tooltip>
@@ -482,9 +482,7 @@ const EntityTooltipTrigger = ({
         <TooltipTrigger className="min-w-4">
           <Globe size={14} strokeWidth={1} className="text-foreground-lighter" />
         </TooltipTrigger>
-        <TooltipContent side="right" className="max-w-52 text-center">
-          At least one privilege on one role is exposed via the API.
-        </TooltipContent>
+        <TooltipContent side="right">This table is exposed via the Data API</TooltipContent>
       </Tooltip>
     )
   }

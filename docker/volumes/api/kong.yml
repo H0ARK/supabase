@@ -64,6 +64,24 @@ services:
       - name: cors
 
   ## Secure Auth routes
+  - name: auth-v1-open-user
+    url: http://auth:9999/user
+    routes:
+      - name: auth-v1-open-user
+        strip_path: true
+        paths:
+          - /auth/v1/user
+    plugins:
+      - name: cors
+  - name: auth-v1-open-token
+    url: http://auth:9999/token
+    routes:
+      - name: auth-v1-open-token
+        strip_path: true
+        paths:
+          - /auth/v1/token
+    plugins:
+      - name: cors
   - name: auth-v1
     _comment: 'GoTrue: /auth/v1/* -> http://auth:9999/*'
     url: http://auth:9999/
@@ -251,21 +269,13 @@ services:
           - /mcp
     plugins:
       # Block access to /mcp by default
-      - name: request-termination
+      - name: cors
+      - name: ip-restriction
         config:
-          status_code: 403
-          message: "Access is forbidden."
-      # Enable local access (danger zone!)
-      # 1. Comment out the 'request-termination' section above
-      # 2. Uncomment the entire section below, including 'deny'
-      # 3. Add your local IPs to the 'allow' list
-      #- name: cors
-      #- name: ip-restriction
-      #  config:
-      #    allow:
-      #      - 127.0.0.1
-      #      - ::1
-      #    deny: []
+          allow:
+            - 0.0.0.0/0
+            - ::1
+          deny: []
 
   ## Protected Dashboard - catch all remaining routes
   - name: dashboard

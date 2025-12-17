@@ -99,3 +99,12 @@ url = ""
 
 [functions.search-embeddings]
 verify_jwt = false
+
+[functions.sync-tcgcsv-products]
+verify_jwt = false
+
+## Cron jobs for edge functions
+#[[edge_runtime.crons]]
+#name = "nightly-tcgcsv-sync"
+#schedule = "0 2 * * *"  # 2 AM daily
+#function = "sync-tcgcsv-products"

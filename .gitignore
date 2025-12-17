@@ -150,3 +150,6 @@ gcloud.json
 **/.sentryclirc
 
 keys.json
+
+# Scraped price data
+docker/tcgcsv/

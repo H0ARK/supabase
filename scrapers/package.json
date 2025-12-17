@@ -1,0 +1,24 @@
+{
+  "name": "rippzz-scrapers",
+  "version": "1.0.0",
+  "description": "Trading card price scrapers for eBay, Fanatics, and other sources",
+  "type": "module",
+  "scripts": {
+    "ebay": "tsx src/ebay-scraper.ts",
+    "fanatics": "tsx src/fanatics-scraper.ts",
+    "test:ebay": "tsx src/ebay-scraper.ts --query 'charizard base set' --limit 10 --dry-run",
+    "test:fanatics": "tsx src/fanatics-scraper.ts --category Pokemon --days 1 --dry-run"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.39.0",
+    "cheerio": "^1.0.0",
+    "dotenv": "^16.4.5",
+    "node-fetch": "^3.3.2",
+    "playwright": "^1.57.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}

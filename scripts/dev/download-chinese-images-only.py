@@ -19,8 +19,8 @@ COLLECTR_JSON_PATH = "/home/ubuntu/collectr_chinese_products_latest.json"
 STORAGE_BASE_PATH = "/home/ubuntu/supabase/docker/volumes/storage/stub/stub/card-images"
 
 # Synthetic product ID range for Chinese cards (category 100086)
-# Using 200000000+ range to avoid conflicts with Korean (100000000+) and Japanese (existing)
-SYNTHETIC_ID_BASE = 200000000
+# Using 100000000+ range to match the database IDs
+SYNTHETIC_ID_BASE = 100000000
 
 # Number of concurrent workers
 MAX_WORKERS = 16

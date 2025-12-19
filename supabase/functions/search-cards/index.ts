@@ -18,8 +18,7 @@ serve(async (req) => {
     const body = await req.json();
     const { 
       query = '', 
-      limit = 20,
-      page = 1,
+      limit = 20, 
       categoryId, 
       groupId, 
       rarityId, 
@@ -86,10 +85,8 @@ serve(async (req) => {
       queryBuilder = queryBuilder.order('card_number', { ascending: sortOrder === 'asc', nullsLast: true });
     }
 
-    // Apply pagination
-    const from = (page - 1) * limit;
-    const to = from + limit - 1;
-    queryBuilder = queryBuilder.range(from, to);
+    // Apply limit
+    queryBuilder = queryBuilder.limit(limit);
 
     const { data: products, error } = await queryBuilder;
 
@@ -106,30 +103,16 @@ serve(async (req) => {
 
     const productIds = products.map(p => p.id);
 
-    // Get latest pricing for each variant of these products
-    // We need to get the most recent price for each product_id + variant_id combination
+    // Get latest pricing for all variants of these products
     const { data: pricingData, error: pricingError } = await supabaseClient
       .from('price_history')
       .select('product_id, variant_id, market_price, recorded_at')
       .in('product_id', productIds)
-      .order('product_id', { ascending: true })
-      .order('variant_id', { ascending: true })
       .order('recorded_at', { ascending: false });
 
     if (pricingError) {
       console.error('[search-cards] Pricing error:', pricingError);
       throw pricingError;
-    }
-
-    // Group pricing by product_id and variant_id to get latest for each
-    const latestPriceMap = new Map<string, any>();
-    if (pricingData) {
-      for (const price of pricingData) {
-        const key = `${price.product_id}_${price.variant_id}`;
-        if (!latestPriceMap.has(key)) {
-          latestPriceMap.set(key, price);
-        }
-      }
     }
 
     // Expand variants
@@ -145,14 +128,15 @@ serve(async (req) => {
         ? `https://api.rippzz.com/storage/v1/object/public/card-images/${categoryId}/${groupId}/product_${productId}.webp`
         : product.local_image_url || '/404_IMAGE_NOT_FOUND.png';
       
-      // Find all unique variants for this product from the latest price map
-      const productVariantKeys = Array.from(latestPriceMap.keys()).filter(key => key.startsWith(`${product.id}_`));
-      const uniqueVariants = productVariantKeys.map(key => parseInt(key.split('_')[1]));
+      // Find all unique variants for this product from pricing data
+      const productPricing = pricingData?.filter(ph => ph.product_id === product.id) || [];
+      const uniqueVariants = [...new Set(productPricing.map(ph => ph.variant_id))];
       
       if (uniqueVariants.length > 0) {
         for (const variantId of uniqueVariants) {
-          // Get the latest price for THIS SPECIFIC variant from our map
-          const latestPrice = latestPriceMap.get(`${product.id}_${variantId}`);
+          // Get the latest price for THIS SPECIFIC variant
+          const variantPricing = productPricing.filter(ph => ph.variant_id === variantId);
+          const latestPrice = variantPricing[0]; // Already ordered by recorded_at descending
           
           const variantName = variantId === 1 ? 'Normal' : variantId === 2 ? 'Holofoil' : variantId === 3 ? 'Reverse Holofoil' : `Variant ${variantId}`;
           
@@ -160,11 +144,16 @@ serve(async (req) => {
             ...product,
             id: createCompositeId(product.id, variantId),
             image: imageUrl,
+            images: {
+              small: imageUrl,
+              normal: imageUrl,
+              large: imageUrl,
+            },
             variantId,
             variantName,
             pricing: {
               variant: { id: variantId, name: variantName },
-              marketPrice: latestPrice?.market_price || 0,
+              marketPrice: latestPrice?.market_price ? latestPrice.market_price / 100 : 0,
               lastUpdated: latestPrice?.recorded_at || new Date().toISOString()
             }
           });
@@ -175,6 +164,11 @@ serve(async (req) => {
           ...product,
           id: createCompositeId(product.id, 1),
           image: imageUrl,
+          images: {
+            small: imageUrl,
+            normal: imageUrl,
+            large: imageUrl,
+          },
           variantId: 1,
           variantName: 'Normal',
           pricing: {
@@ -189,9 +183,7 @@ serve(async (req) => {
     return new Response(
       JSON.stringify({ 
         results: expandedResults,
-        totalResults: expandedResults.length,
-        page,
-        hasMore: expandedResults.length >= limit
+        totalResults: expandedResults.length // Simple total for now
       }),
       {
         headers: { ...corsHeaders, "Content-Type": "application/json" },

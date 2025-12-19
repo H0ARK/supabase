@@ -337,6 +337,8 @@ services:
     restart: unless-stopped
     volumes:
       - ./volumes/functions:/home/deno/functions:Z
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       analytics:
         condition: service_healthy
@@ -353,6 +355,7 @@ services:
       STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET}
       STRIPE_TEST_MODE: ${STRIPE_TEST_MODE}
       FRONTEND_URL: ${FRONTEND_URL}
+      MCP_API_KEY: ${MCP_API_KEY}
     command:
       [
         "start",

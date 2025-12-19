@@ -1,7 +1,9 @@
 // TCGPlayer Proxy Edge Function
 // REFACTORED: Check local price_history first, fallback to external API
+// UPDATED: Supports composite variant IDs (productId_variantId)
 
 import { createClient } from 'jsr:@supabase/supabase-js@2';
+import { parseCardId } from '../_shared/cardId.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -15,21 +17,21 @@ Deno.serve(async (req) => {
 
   try {
     const url = new URL(req.url);
-    let productId = url.searchParams.get('productId');
+    let productIdParam = url.searchParams.get('productId');
     let range = url.searchParams.get('range') || 'quarter'; // day, week, month, quarter, year, all
 
     // Try to parse body if params are missing and method is POST
-    if (!productId && req.method === 'POST') {
+    if (!productIdParam && req.method === 'POST') {
       try {
         const body = await req.json();
-        productId = body.productId;
+        productIdParam = body.productId;
         if (body.range) range = body.range;
       } catch {
         // Ignore body parsing error
       }
     }
 
-    if (!productId) {
+    if (!productIdParam) {
       return new Response(
         JSON.stringify({ error: 'Missing productId parameter' }),
         {
@@ -38,6 +40,11 @@ Deno.serve(async (req) => {
         }
       );
     }
+
+    // Parse composite ID if provided
+    const parsed = parseCardId(productIdParam);
+    const productId = parsed.productId;
+    const variantId = parsed.variantId;
 
     // Create Supabase client
     const supabase = createClient(
@@ -71,24 +78,33 @@ Deno.serve(async (req) => {
         startDate = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
     }
 
-    console.log(`Fetching price history for product ${productId}, range: ${range}`);
+    console.log(`Fetching price history for product ${productId}, variant ${variantId}, range: ${range}`);
 
     // First, try to get data from local database
-    const { data: localData, error: localError } = await supabase
+    let priceQuery = supabase
       .from('price_history')
       .select('*')
-      .eq('product_id', parseInt(productId))
-      .gte('date', startDate.toISOString().split('T')[0])
-      .order('date', { ascending: true });
+      .eq('product_id', productId)
+      .gte('recorded_at', startDate.toISOString().split('T')[0])
+      .order('recorded_at', { ascending: true });
+
+    // Filter by variant if composite ID was provided
+    if (parsed.isComposite) {
+      priceQuery = priceQuery.eq('variant_id', variantId);
+    }
+
+    const { data: localData, error: localError } = await priceQuery;
 
     if (!localError && localData && localData.length > 0) {
       console.log(`Found ${localData.length} local price records`);
       
       // Format data to match TCGPlayer API response format
       const formattedData = {
-        productId: parseInt(productId),
+        productId: productId,
+        variantId: parsed.isComposite ? variantId : undefined,
         priceHistory: localData.map(p => ({
-          date: p.date,
+          date: p.recorded_at,
+          variantId: p.variant_id,
           marketPrice: p.market_price,
           lowPrice: p.low_price,
           midPrice: p.mid_price,

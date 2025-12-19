@@ -1,0 +1,1 @@
+Deno.serve(async (req) => new Response("Hello from Deno.serve!"));

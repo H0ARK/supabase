@@ -153,3 +153,4 @@ keys.json
 
 # Scraped price data
 docker/tcgcsv/
+scripts/dev/scraper_env/

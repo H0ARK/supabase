@@ -2,6 +2,7 @@
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 // @ts-ignore: Deno import  
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { parseCardId, extractProductIds, createCompositeId } from "../_shared/cardId.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -12,11 +13,14 @@ const corsHeaders = {
 /**
  * Get Prices API
  * 
+ * UPDATED: Now supports composite variant IDs (productId_variantId)
+ * 
  * Endpoints:
- * - GET /get-prices?product_id=123 - Get current price for a product
- * - GET /get-prices?product_ids=123,456,789 - Get prices for multiple products
+ * - GET /get-prices?product_id=123 - Get current price for a product (all variants)
+ * - GET /get-prices?product_id=123_3 - Get current price for specific variant
+ * - GET /get-prices?product_ids=123,456_3,789 - Get prices for multiple products/variants
  * - GET /get-prices?search=charizard - Search products and get their prices
- * - POST /get-prices { product_ids: [123, 456], include_history: true, days: 30 }
+ * - POST /get-prices { product_ids: [123, "456_3"], include_history: true, days: 30 }
  */
 
 interface PriceData {
@@ -24,6 +28,8 @@ interface PriceData {
   product_name?: string;
   set_name?: string;
   variants: {
+    composite_id: string;
+    variant_id: number;
     variant_name: string;
     low_price: number | null;
     mid_price: number | null;
@@ -34,6 +40,8 @@ interface PriceData {
   }[];
   price_history?: {
     date: string;
+    composite_id: string;
+    variant_id: number;
     variant_name: string;
     market_price: number | null;
   }[];
@@ -51,10 +59,11 @@ serve(async (req: Request) => {
     const supabase = createClient(supabaseUrl, supabaseKey);
 
     const url = new URL(req.url);
-    let productIds: number[] = [];
+    let cardIds: (string | number)[] = [];
     let search: string | null = null;
     let includeHistory = false;
     let historyDays = 30;
+    let filterVariantIds: number[] = []; // Track specific variant IDs to filter
 
     // Handle both GET and POST
     if (req.method === "GET") {
@@ -65,16 +74,38 @@ serve(async (req: Request) => {
       historyDays = parseInt(url.searchParams.get("days") || "30");
 
       if (productIdParam) {
-        productIds = [parseInt(productIdParam)];
+        cardIds = [productIdParam];
       } else if (productIdsParam) {
-        productIds = productIdsParam.split(",").map(id => parseInt(id.trim())).filter(id => !isNaN(id));
+        cardIds = productIdsParam.split(",").map(id => id.trim()).filter(id => id);
       }
     } else if (req.method === "POST") {
       const body = await req.json();
-      productIds = body.product_ids || [];
+      cardIds = body.product_ids || [];
       search = body.search || null;
       includeHistory = body.include_history || false;
       historyDays = body.days || 30;
+    }
+
+    // Parse card IDs and extract product IDs and variant filters
+    const parsedIds = cardIds.map(id => {
+      try {
+        return parseCardId(id);
+      } catch {
+        return null;
+      }
+    }).filter(p => p !== null);
+
+    let productIds = [...new Set(parsedIds.map(p => p!.productId))];
+    
+    // Build variant filter map (productId -> Set of variantIds)
+    const variantFilters = new Map<number, Set<number>>();
+    for (const parsed of parsedIds) {
+      if (parsed!.isComposite) {
+        if (!variantFilters.has(parsed!.productId)) {
+          variantFilters.set(parsed!.productId, new Set());
+        }
+        variantFilters.get(parsed!.productId)!.add(parsed!.variantId);
+      }
     }
 
     // Search for products if search query provided
@@ -121,10 +152,13 @@ serve(async (req: Request) => {
       console.error("Products error:", productsError);
     }
 
-    const productMap = new Map((products || []).map((p: any) => [
-      p.id,
-      { name: p.name, set_name: p.groups?.name }
-    ]));
+    const productMap = new Map((products || []).map((p: any) => {
+      const groupName = Array.isArray(p.groups) ? p.groups[0]?.name : p.groups?.name;
+      return [
+        p.id,
+        { name: p.name, set_name: groupName }
+      ];
+    }));
 
     // Get latest date with prices
     const { data: latestDate } = await supabase
@@ -168,6 +202,12 @@ serve(async (req: Request) => {
     const pricesByProduct = new Map<number, PriceData>();
     
     for (const price of currentPrices || []) {
+      // Skip variants not in filter (if filter exists for this product)
+      const variantFilter = variantFilters.get(price.product_id);
+      if (variantFilter && variantFilter.size > 0 && !variantFilter.has(price.variant_id)) {
+        continue;
+      }
+
       if (!pricesByProduct.has(price.product_id)) {
         const productInfo = productMap.get(price.product_id);
         pricesByProduct.set(price.product_id, {
@@ -179,7 +219,11 @@ serve(async (req: Request) => {
       }
 
       const productData = pricesByProduct.get(price.product_id)!;
+      const compositeId = createCompositeId(price.product_id, price.variant_id);
+      
       productData.variants.push({
+        composite_id: compositeId,
+        variant_id: price.variant_id,
         variant_name: variantMap.get(price.variant_id) || "Unknown",
         low_price: centsToUsd(price.low_price, price.low_price_usd),
         mid_price: centsToUsd(price.mid_price, price.mid_price_usd),
@@ -207,11 +251,20 @@ serve(async (req: Request) => {
         for (const record of history) {
           const productData = pricesByProduct.get(record.product_id);
           if (productData) {
+            // Skip variants not in filter (if filter exists for this product)
+            const variantFilter = variantFilters.get(record.product_id);
+            if (variantFilter && variantFilter.size > 0 && !variantFilter.has(record.variant_id)) {
+              continue;
+            }
+
             if (!productData.price_history) {
               productData.price_history = [];
             }
+            const compositeId = createCompositeId(record.product_id, record.variant_id);
             productData.price_history.push({
               date: record.recorded_at,
+              composite_id: compositeId,
+              variant_id: record.variant_id,
               variant_name: variantMap.get(record.variant_id) || "Unknown",
               market_price: centsToUsd(record.market_price, record.market_price_usd)
             });

@@ -1,0 +1,1 @@
+export default async (req) => new Response(JSON.stringify({ url: req.url, method: req.method, headers: Object.fromEntries(req.headers.entries()) }), { headers: { "Content-Type": "application/json" } });

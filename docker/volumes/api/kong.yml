@@ -243,7 +243,7 @@ services:
           allow:
             - admin
 
-  ## Block access to /api/mcp
+  ## Block access to /api/mcp (Studio built-in MCP)
   - name: mcp-blocker
     _comment: 'Block direct access to /api/mcp'
     url: http://studio:3000/api/mcp
@@ -258,24 +258,17 @@ services:
           status_code: 403
           message: "Access is forbidden."
 
-  ## MCP endpoint - local access
+  ## MCP endpoint
   - name: mcp
-    _comment: 'MCP: /mcp -> http://studio:3000/api/mcp (local access)'
-    url: http://studio:3000/api/mcp
+    _comment: 'MCP: /mcp -> http://functions:9000/mcp-server/mcp'
+    url: http://functions:9000/mcp-server/mcp
     routes:
       - name: mcp
         strip_path: true
         paths:
           - /mcp
     plugins:
-      # Block access to /mcp by default
       - name: cors
-      - name: ip-restriction
-        config:
-          allow:
-            - 0.0.0.0/0
-            - ::1
-          deny: []
 
   ## Protected Dashboard - catch all remaining routes
   - name: dashboard

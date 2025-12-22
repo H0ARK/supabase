@@ -1,20 +1,9 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import Stripe from "https://esm.sh/stripe@14.21.0";
 
-// =============================================================================
-// STRIPE WEBHOOK HANDLER - Card Trader Marketplace
-// =============================================================================
+// Stripe webhook handler for marketplace payment events
 // Handles: checkout.session.completed, payment_intent.succeeded,
 // payment_intent.payment_failed, charge.refunded, account.updated
-//
-// TEST MODE: Set TEST_MODE=true to log events without database writes
-// =============================================================================
-
-// ⚠️ TEST MODE FLAG - Set to false for production
-const TEST_MODE = Deno.env.get("STRIPE_TEST_MODE") === "true" || true; // Default to true for safety
-
-// Log prefix for easy filtering
-const LOG_PREFIX = TEST_MODE ? "[TEST MODE]" : "[PRODUCTION]";
 
 interface WebhookEventMetadata {
   listing_id?: string;
@@ -65,28 +54,14 @@ async function handleCheckoutSessionCompleted(
 ): Promise<void> {
   const metadata = session.metadata as WebhookEventMetadata;
 
-  console.log(`${LOG_PREFIX} Processing checkout.session.completed:`, {
+  console.log("Processing checkout.session.completed:", {
     sessionId: session.id,
     paymentIntentId: session.payment_intent,
-    paymentStatus: session.payment_status,
-    amountTotal: session.amount_total,
-    currency: session.currency,
     metadata,
   });
 
   if (!metadata?.listing_id || !metadata?.buyer_id || !metadata?.seller_id) {
-    console.error(`${LOG_PREFIX} Missing required metadata in checkout session:`, metadata);
-    return;
-  }
-
-  // In TEST MODE, just log what would happen
-  if (TEST_MODE) {
-    console.log(`${LOG_PREFIX} Would update/create purchase record for listing: ${metadata.listing_id}`);
-    console.log(`${LOG_PREFIX} Buyer: ${metadata.buyer_id}, Seller: ${metadata.seller_id}`);
-    console.log(`${LOG_PREFIX} Payment Status: ${session.payment_status}`);
-    if (session.payment_status === "paid") {
-      console.log(`${LOG_PREFIX} Would mark listing as sold and notify seller`);
-    }
+    console.error("Missing required metadata in checkout session:", metadata);
     return;
   }
 
@@ -198,23 +173,10 @@ async function handlePaymentIntentSucceeded(
   paymentIntent: Stripe.PaymentIntent,
   supabase: ReturnType<typeof createAdminClient>
 ): Promise<void> {
-  console.log(`${LOG_PREFIX} Processing payment_intent.succeeded:`, {
+  console.log("Processing payment_intent.succeeded:", {
     paymentIntentId: paymentIntent.id,
-    amount: paymentIntent.amount,
-    currency: paymentIntent.currency,
     metadata: paymentIntent.metadata,
   });
-
-  // In TEST MODE, just log what would happen
-  if (TEST_MODE) {
-    const metadata = paymentIntent.metadata as WebhookEventMetadata;
-    console.log(`${LOG_PREFIX} Would find and update purchase for payment intent: ${paymentIntent.id}`);
-    if (metadata?.seller_id) {
-      console.log(`${LOG_PREFIX} Would record sale for seller: ${metadata.seller_id}`);
-    }
-    console.log(`${LOG_PREFIX} Would notify buyer of successful payment`);
-    return;
-  }
 
   // Find purchase by payment intent ID
   const { data: purchase, error: findError } = await supabase
@@ -295,19 +257,10 @@ async function handlePaymentIntentFailed(
   paymentIntent: Stripe.PaymentIntent,
   supabase: ReturnType<typeof createAdminClient>
 ): Promise<void> {
-  console.log(`${LOG_PREFIX} Processing payment_intent.payment_failed:`, {
+  console.log("Processing payment_intent.payment_failed:", {
     paymentIntentId: paymentIntent.id,
     lastPaymentError: paymentIntent.last_payment_error?.message,
-    errorCode: paymentIntent.last_payment_error?.code,
   });
-
-  // In TEST MODE, just log what would happen
-  if (TEST_MODE) {
-    console.log(`${LOG_PREFIX} Would find and mark purchase as failed for: ${paymentIntent.id}`);
-    console.log(`${LOG_PREFIX} Error: ${paymentIntent.last_payment_error?.message || 'Unknown'}`);
-    console.log(`${LOG_PREFIX} Would notify buyer of failed payment`);
-    return;
-  }
 
   // Find purchase by payment intent ID
   const { data: purchase, error: findError } = await supabase
@@ -367,7 +320,7 @@ async function handleChargeRefunded(
   charge: Stripe.Charge,
   supabase: ReturnType<typeof createAdminClient>
 ): Promise<void> {
-  console.log(`${LOG_PREFIX} Processing charge.refunded:`, {
+  console.log("Processing charge.refunded:", {
     chargeId: charge.id,
     paymentIntentId: charge.payment_intent,
     amountRefunded: charge.amount_refunded,
@@ -376,15 +329,7 @@ async function handleChargeRefunded(
 
   const paymentIntentId = charge.payment_intent;
   if (!paymentIntentId) {
-    console.error(`${LOG_PREFIX} No payment intent ID in refunded charge`);
-    return;
-  }
-
-  // In TEST MODE, just log what would happen
-  if (TEST_MODE) {
-    console.log(`${LOG_PREFIX} Would find and mark purchase as refunded for: ${paymentIntentId}`);
-    console.log(`${LOG_PREFIX} Amount refunded: ${charge.amount_refunded / 100} ${charge.currency?.toUpperCase()}`);
-    console.log(`${LOG_PREFIX} Would notify buyer and seller of refund`);
+    console.error("No payment intent ID in refunded charge");
     return;
   }
 
@@ -453,12 +398,11 @@ async function handleAccountUpdated(
   account: Stripe.Account,
   supabase: ReturnType<typeof createAdminClient>
 ): Promise<void> {
-  console.log(`${LOG_PREFIX} Processing account.updated:`, {
+  console.log("Processing account.updated:", {
     accountId: account.id,
     chargesEnabled: account.charges_enabled,
     payoutsEnabled: account.payouts_enabled,
     detailsSubmitted: account.details_submitted,
-    requirements: account.requirements?.currently_due,
   });
 
   // Determine verification status based on account state
@@ -474,14 +418,6 @@ async function handleAccountUpdated(
     account.requirements.disabled_reason.includes("rejected")
   ) {
     verificationStatus = "rejected";
-  }
-
-  // In TEST MODE, just log what would happen
-  if (TEST_MODE) {
-    console.log(`${LOG_PREFIX} Would update seller account: ${account.id}`);
-    console.log(`${LOG_PREFIX} New verification status: ${verificationStatus}`);
-    console.log(`${LOG_PREFIX} Charges enabled: ${account.charges_enabled}, Payouts enabled: ${account.payouts_enabled}`);
-    return;
   }
 
   // Update seller account in database
@@ -527,19 +463,19 @@ async function markListingAsSold(
   }
 }
 
-// Helper: Create a notification record
-// Note: This creates a placeholder for the notification system (Phase 4)
+// Helper: Create a notification record and trigger email/push delivery
 async function createNotificationRecord(
   userId: string,
   type: string,
   title: string,
   message: string,
   link: string,
-  supabase: ReturnType<typeof createAdminClient>
+  supabase: ReturnType<typeof createAdminClient>,
+  metadata?: Record<string, unknown>
 ): Promise<void> {
   try {
-    // Check if user_notifications table exists
-    const { error: insertError } = await supabase
+    // Insert notification into database
+    const { data: notification, error: insertError } = await supabase
       .from("user_notifications")
       .insert({
         user_id: userId,
@@ -547,31 +483,74 @@ async function createNotificationRecord(
         title,
         message,
         link,
+        metadata: metadata || {},
         read: false,
-      });
+      })
+      .select()
+      .single();
 
     if (insertError) {
-      // Table might not exist yet (Phase 4), just log for now
       console.log(
-        "Notification not created (table may not exist):",
+        "Notification not created:",
         insertError.message
       );
       console.log("Notification would be:", { userId, type, title, message, link });
-    } else {
-      console.log("Created notification for user:", userId, type);
+      return;
+    }
+
+    console.log("Created notification for user:", userId, type);
+
+    // Call the notifications edge function for email/push delivery
+    // This is an internal call, so we use the service role key
+    const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
+    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+    
+    if (supabaseUrl && serviceRoleKey) {
+      try {
+        const notificationPayload = {
+          notification: {
+            user_id: userId,
+            type,
+            title,
+            message,
+            link,
+            metadata: {
+              ...metadata,
+              notification_id: notification.id,
+            },
+            send_email: true, // Enable email delivery
+          },
+        };
+
+        const response = await fetch(`${supabaseUrl}/functions/v1/notifications`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${serviceRoleKey}`,
+          },
+          body: JSON.stringify(notificationPayload),
+        });
+
+        if (response.ok) {
+          const result = await response.json();
+          console.log("Email/push notification triggered:", result);
+        } else {
+          const errorText = await response.text();
+          console.warn("Failed to trigger email/push notification:", errorText);
+        }
+      } catch (fetchError) {
+        // Don't fail webhook processing if notification delivery fails
+        console.warn("Error calling notifications function:", fetchError);
+      }
     }
   } catch (err) {
-    // Silently fail notification creation - not critical
+    // Silently fail notification creation - not critical to webhook processing
     console.log("Failed to create notification:", err);
   }
 }
 
 // Main webhook handler
 Deno.serve(async (req) => {
-  // Log startup status
-  console.log(`${LOG_PREFIX} Stripe Webhook Handler Active`);
-  console.log(`${LOG_PREFIX} Test Mode: ${TEST_MODE ? 'ENABLED - No database writes' : 'DISABLED - Production mode'}`);
-
   // Only accept POST requests
   if (req.method !== "POST") {
     return new Response(JSON.stringify({ error: "Method not allowed" }), {
@@ -618,7 +597,7 @@ Deno.serve(async (req) => {
       );
     }
 
-    console.log(`${LOG_PREFIX} Received webhook event:`, event.type, "ID:", event.id);
+    console.log("Received webhook event:", event.type, "ID:", event.id);
 
     const supabase = createAdminClient();
 
@@ -660,15 +639,10 @@ Deno.serve(async (req) => {
         break;
 
       default:
-        console.log(`${LOG_PREFIX} Unhandled event type:`, event.type);
+        console.log("Unhandled event type:", event.type);
     }
 
-    return new Response(JSON.stringify({ 
-      received: true, 
-      type: event.type,
-      test_mode: TEST_MODE,
-      message: TEST_MODE ? "Event logged (test mode - no DB writes)" : "Event processed"
-    }), {
+    return new Response(JSON.stringify({ received: true, type: event.type }), {
       status: 200,
       headers: { "Content-Type": "application/json" },
     });

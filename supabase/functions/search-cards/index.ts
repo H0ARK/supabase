@@ -103,16 +103,14 @@ serve(async (req) => {
 
     const productIds = products.map(p => p.id);
 
-    // Get latest pricing for all variants of these products
+    // Get latest pricing for each variant of these products using current_prices view
     const { data: pricingData, error: pricingError } = await supabaseClient
-      .from('price_history')
+      .from('current_prices')
       .select('product_id, variant_id, market_price, recorded_at')
-      .in('product_id', productIds)
-      .order('recorded_at', { ascending: false });
+      .in('product_id', productIds);
 
     if (pricingError) {
       console.error('[search-cards] Pricing error:', pricingError);
-      throw pricingError;
     }
 
     // Expand variants
@@ -135,14 +133,14 @@ serve(async (req) => {
       if (uniqueVariants.length > 0) {
         for (const variantId of uniqueVariants) {
           // Get the latest price for THIS SPECIFIC variant
-          const variantPricing = productPricing.filter(ph => ph.variant_id === variantId);
-          const latestPrice = variantPricing[0]; // Already ordered by recorded_at descending
+          const latestPrice = productPricing.find(ph => ph.variant_id === variantId);
           
           const variantName = variantId === 1 ? 'Normal' : variantId === 2 ? 'Holofoil' : variantId === 3 ? 'Reverse Holofoil' : `Variant ${variantId}`;
           
           expandedResults.push({
             ...product,
             id: createCompositeId(product.id, variantId),
+            productId: product.id,
             image: imageUrl,
             images: {
               small: imageUrl,

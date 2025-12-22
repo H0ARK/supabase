@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
-import { parseCardId } from "../_shared/cardId.ts";
+import { parseCardId, createCompositeId } from "../_shared/cardId.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -40,19 +40,28 @@ serve(async (req) => {
 
     if (productError) throw productError;
 
+    // Fetch latest pricing from current_prices view
+    const { data: latestPricing, error: latestPriceError } = await supabaseClient
+      .from('current_prices')
+      .select('variant_id, market_price, low_price, mid_price, high_price, recorded_at')
+      .eq('product_id', productId)
+      .eq('variant_id', variantId)
+      .maybeSingle();
+
     // Fetch variant-specific pricing history
     const { data: priceHistory, error: priceError } = await supabaseClient
       .from('price_history')
       .select('variant_id, market_price, low_price, mid_price, high_price, recorded_at')
       .eq('product_id', productId)
       .eq('variant_id', variantId)
-      .order('recorded_at', { ascending: false });
+      .order('recorded_at', { ascending: false })
+      .limit(90);
 
     if (priceError) throw priceError;
 
     // Get all available variants for selection
     const { data: variants, error: variantsError } = await supabaseClient
-      .from('price_history')
+      .from('current_prices')
       .select('variant_id')
       .eq('product_id', productId);
       
@@ -64,7 +73,6 @@ serve(async (req) => {
       productId: productId.toString()
     }));
 
-    const latestPricing = priceHistory?.[0] || null;
     const variantName = variantId === 1 ? 'Normal' : variantId === 2 ? 'Holofoil' : variantId === 3 ? 'Reverse Holofoil' : `Variant ${variantId}`;
 
     // Construct Supabase storage URL
@@ -76,20 +84,21 @@ serve(async (req) => {
 
     const enrichedProduct = {
       ...product,
+      id: createCompositeId(productId, variantId),
       variantId,
       variantName,
       image: imageUrl,
       pricing: latestPricing ? {
         variant: { id: variantId, name: variantName },
-        marketPrice: latestPricing.market_price,
-        lowPrice: latestPricing.low_price,
-        midPrice: latestPricing.mid_price,
-        highPrice: latestPricing.high_price,
+        marketPrice: (latestPricing.market_price || 0) / 100,
+        lowPrice: (latestPricing.low_price || 0) / 100,
+        midPrice: (latestPricing.mid_price || 0) / 100,
+        highPrice: (latestPricing.high_price || 0) / 100,
         lastUpdated: latestPricing.recorded_at
       } : null,
       priceHistory: priceHistory?.map(ph => ({
         date: ph.recorded_at,
-        price: ph.market_price
+        price: (ph.market_price || 0) / 100
       })) || []
     };
 

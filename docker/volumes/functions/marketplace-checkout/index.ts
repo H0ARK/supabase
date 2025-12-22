@@ -1,6 +1,10 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { corsHeaders } from "../_shared/cors.ts";
 import Stripe from "https://esm.sh/stripe@14.21.0";
+
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+};
 
 interface CheckoutRequest {
   listingId: string;
@@ -146,6 +150,7 @@ Deno.serve(async (req) => {
     
     const platformFee = Math.round(platformFeeDollars * 100); // Convert to cents
     const sellerAmount = itemAmount - platformFee;
+    const feePercentage = effectiveRate * 100; // human-readable percent for metadata
 
     console.log(`Checkout: Seller tier=${currentTier}, effective_rate=${(effectiveRate * 100).toFixed(2)}%, platformFee=$${platformFeeDollars.toFixed(2)}`);
 

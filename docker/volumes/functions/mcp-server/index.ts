@@ -15,8 +15,13 @@ const mcp = new McpServer({
 // Initialize Supabase client
 const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? ''
 const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-const mcpApiKey = Deno.env.get('MCP_API_KEY') ?? 'default-super-secret-key'
+const mcpApiKey = Deno.env.get('MCP_API_KEY') ?? ''
 const supabase = createClient(supabaseUrl, supabaseKey)
+const deployServerUrl = Deno.env.get('MCP_DEPLOY_URL') ?? 'http://172.18.0.1:8767/mcp'
+
+if (!mcpApiKey) {
+  console.error('MCP_API_KEY is missing; MCP server will reject all requests.')
+}
 
 // Initialize Postgres client for raw SQL
 const dbUrl = Deno.env.get('SUPABASE_DB_URL') ?? ''
@@ -26,21 +31,27 @@ mcp.tool('list_tables', {
   description: 'List all tables in the public schema',
   inputSchema: z.object({}),
   handler: async () => {
-    const { data, error } = await supabase
-      .from('pg_tables')
-      .select('tablename')
-      .eq('schemaname', 'public')
-
-    if (error) {
+    const client = new Client(dbUrl)
+    try {
+      await client.connect()
+      const result = await client.queryObject<{ tablename: string }>(`
+        SELECT tablename 
+        FROM pg_catalog.pg_tables 
+        WHERE schemaname = 'public'
+        ORDER BY tablename
+      `)
+      
+      const tables = result.rows.map(t => t.tablename).join(', ')
+      return {
+        content: [{ type: 'text', text: `Tables in public schema: ${tables}` }],
+      }
+    } catch (error: any) {
       return {
         content: [{ type: 'text', text: `Error: ${error.message}` }],
         isError: true,
       }
-    }
-
-    const tables = data.map((t: any) => t.tablename).join(', ')
-    return {
-      content: [{ type: 'text', text: `Tables in public schema: ${tables}` }],
+    } finally {
+      await client.end()
     }
   },
 })
@@ -234,7 +245,10 @@ mcp.tool('list_functions', {
   inputSchema: z.object({}),
   handler: async () => {
     try {
-      const response = await fetch('http://172.18.0.1:8767/mcp', {
+      if (!mcpApiKey) {
+        throw new Error('MCP_API_KEY is not configured')
+      }
+      const response = await fetch(deployServerUrl, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
@@ -271,7 +285,10 @@ mcp.tool('get_function_code', {
   }),
   handler: async (args: { name: string }) => {
     try {
-      const response = await fetch('http://172.18.0.1:8767/mcp', {
+      if (!mcpApiKey) {
+        throw new Error('MCP_API_KEY is not configured')
+      }
+      const response = await fetch(deployServerUrl, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
@@ -308,7 +325,10 @@ mcp.tool('delete_function', {
   }),
   handler: async (args: { name: string }) => {
     try {
-      const response = await fetch('http://172.18.0.1:8767/mcp', {
+      if (!mcpApiKey) {
+        throw new Error('MCP_API_KEY is not configured')
+      }
+      const response = await fetch(deployServerUrl, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
@@ -345,8 +365,13 @@ mcp.tool('deploy_function', {
     code: z.string().describe('The TypeScript code for the function'),
   }),
   handler: async (args: { name: string; code: string }) => {
+    console.log(`[mcp-server] Deploying function: ${args.name}`)
     try {
-      const response = await fetch('http://172.18.0.1:8767/mcp', {
+      if (!mcpApiKey) {
+        throw new Error('MCP_API_KEY is not configured')
+      }
+      console.log(`[mcp-server] Calling deploy server at ${deployServerUrl}`)
+      const response = await fetch(deployServerUrl, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
@@ -363,12 +388,89 @@ mcp.tool('deploy_function', {
         }),
       })
 
+      console.log(`[mcp-server] Deploy server responded with status: ${response.status}`)
+      const result = await response.json()
+      console.log(`[mcp-server] Deploy server response body parsed`)
+      if (result.error) throw new Error(result.error.message)
+      return result.result
+    } catch (error: any) {
+      console.error(`[mcp-server] Deployment error: ${error.message}`)
+      return {
+        content: [{ type: 'text', text: `Deployment failed: ${error.message}` }],
+        isError: true,
+      }
+    }
+  },
+})
+
+// Define a tool to restart edge functions runtime
+mcp.tool('restart_functions', {
+  description: 'Restart the edge functions runtime',
+  inputSchema: z.object({}),
+  handler: async () => {
+    try {
+      if (!mcpApiKey) {
+        throw new Error('MCP_API_KEY is not configured')
+      }
+      const response = await fetch(deployServerUrl, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'X-MCP-Key': mcpApiKey
+        },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'tools/call',
+          params: {
+            name: 'restart_functions',
+            arguments: {},
+          },
+        }),
+      })
+
       const result = await response.json()
       if (result.error) throw new Error(result.error.message)
       return result.result
     } catch (error: any) {
       return {
-        content: [{ type: 'text', text: `Deployment failed: ${error.message}` }],
+        content: [{ type: 'text', text: `Failed to restart functions: ${error.message}` }],
+        isError: true,
+      }
+    }
+  },
+})
+
+// Define a tool to check deploy server connectivity
+mcp.tool('deploy_server_health', {
+  description: 'Check connectivity to the deploy server',
+  inputSchema: z.object({}),
+  handler: async () => {
+    try {
+      if (!mcpApiKey) {
+        throw new Error('MCP_API_KEY is not configured')
+      }
+      const response = await fetch(deployServerUrl, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'X-MCP-Key': mcpApiKey
+        },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'tools/list',
+        }),
+      })
+
+      const result = await response.json()
+      if (result.error) throw new Error(result.error.message)
+      return {
+        content: [{ type: 'text', text: 'Deploy server reachable.' }],
+      }
+    } catch (error: any) {
+      return {
+        content: [{ type: 'text', text: `Deploy server health check failed: ${error.message}` }],
         isError: true,
       }
     }
@@ -385,6 +487,9 @@ const app = new Hono()
 // Auth Middleware
 app.use('/mcp-server/*', async (c, next) => {
   const apiKey = c.req.header('X-MCP-Key')
+  if (!mcpApiKey) {
+    return c.json({ error: 'MCP server not configured' }, 503)
+  }
   if (apiKey !== mcpApiKey) {
     return c.json({ error: 'Unauthorized' }, 401)
   }

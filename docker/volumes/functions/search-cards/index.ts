@@ -1,6 +1,6 @@
+// v2 - Robust joined fields
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
-import { createCompositeId } from "../_shared/cardId.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -8,6 +8,11 @@ const corsHeaders = {
 };
 
 const POKEMON_CATEGORY_IDS = [3, 85, 100086, 100087, 100088, 100089];
+
+// Helper to create a composite ID for frontend use
+const createCompositeId = (productId: number | string, variantId: number | string) => {
+  return `${productId}_${variantId}`;
+};
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -41,7 +46,7 @@ serve(async (req) => {
         group:groups!products_group_id_fkey(id, name, abbreviation),
         category:categories(id, name),
         rarity:rarities(id, name)
-      `);
+      `, { count: 'exact' });
 
     // Apply search query
     if (query) {
@@ -86,12 +91,15 @@ serve(async (req) => {
       queryBuilder = queryBuilder.order('card_number', { ascending: sortOrder === 'asc', nullsLast: true });
     }
 
+    // Add deterministic tie-breaker to prevent duplicate results across pages
+    queryBuilder = queryBuilder.order('id', { ascending: true });
+
     // Apply pagination
     const from = (page - 1) * limit;
     const to = from + limit - 1;
     queryBuilder = queryBuilder.range(from, to);
 
-    const { data: products, error } = await queryBuilder;
+    const { data: products, error, count } = await queryBuilder;
 
     if (error) {
       console.error('[search-cards] Database error:', error);
@@ -99,46 +107,90 @@ serve(async (req) => {
     }
 
     if (!products || products.length === 0) {
-      return new Response(JSON.stringify({ results: [], totalResults: 0 }), {
+      return new Response(JSON.stringify({ results: [], totalResults: 0, page, hasMore: false }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    const productIds = products.map(p => p.id);
+    // Robustly handle joined fields that might be arrays or objects
+    const getJoined = (val: any) => Array.isArray(val) ? val[0] : val;
 
-    // Get latest pricing for each variant of these products
-    // We need to get the most recent price for each product_id + variant_id combination
+    const productIds = products.map(p => Number(p.id));
+
+    // Get latest pricing for each variant of these products using current_prices view
     const { data: pricingData, error: pricingError } = await supabaseClient
-      .from('price_history')
-      .select('product_id, variant_id, market_price, recorded_at')
-      .in('product_id', productIds)
-      .order('product_id', { ascending: true })
-      .order('variant_id', { ascending: true })
-      .order('recorded_at', { ascending: false });
+      .from('current_prices')
+      .select('product_id, variant_id, market_price, low_price, mid_price, high_price, direct_low_price, recorded_at')
+      .in('product_id', productIds);
 
     if (pricingError) {
       console.error('[search-cards] Pricing error:', pricingError);
-      throw pricingError;
     }
 
-    // Group pricing by product_id and variant_id to get latest for each
+    // Group pricing by product_id and variant_id
     const latestPriceMap = new Map<string, any>();
+    const variantsByProduct = new Map<number, Set<number>>();
+    const variantIds = new Set<number>();
     if (pricingData) {
       for (const price of pricingData) {
-        const key = `${price.product_id}_${price.variant_id}`;
-        if (!latestPriceMap.has(key)) {
-          latestPriceMap.set(key, price);
+        const productId = Number(price.product_id);
+        const variantId = Number(price.variant_id);
+        const key = `${productId}_${variantId}`;
+        latestPriceMap.set(key, price);
+
+        variantIds.add(variantId);
+        let productVariants = variantsByProduct.get(productId);
+        if (!productVariants) {
+          productVariants = new Set<number>();
+          variantsByProduct.set(productId, productVariants);
+        }
+        productVariants.add(variantId);
+      }
+    }
+
+    const variantNameMap = new Map<number, string>();
+    if (variantIds.size > 0) {
+      const { data: variantRows, error: variantError } = await supabaseClient
+        .from('variants')
+        .select('id, name')
+        .in('id', Array.from(variantIds));
+
+      if (variantError) {
+        console.error('[search-cards] Variant lookup error:', variantError);
+      } else {
+        for (const row of variantRows || []) {
+          variantNameMap.set(row.id, row.name);
         }
       }
     }
+
+    const getVariantName = (id: number) =>
+      variantNameMap.get(id) ||
+      (id === 1
+        ? 'Normal'
+        : id === 2
+          ? 'Holofoil'
+          : id === 3
+            ? 'Reverse Holofoil'
+            : `Variant ${id}`);
 
     // Expand variants
     const expandedResults: any[] = [];
     
     for (const product of products) {
+      // Robustly handle joined fields
+      const group = getJoined(product.group);
+      const category = getJoined(product.category);
+      const rarity = getJoined(product.rarity);
+
+      const setName = group?.name || 'Unknown Set';
+      const setAbbr = group?.abbreviation || 'unknown';
+      const cardNumber = product.card_number || '';
+      const productIdNum = Number(product.id);
+
       // Construct Supabase storage URL
-      const categoryId = product.category?.id || 3;
-      const groupId = product.group?.id;
+      const categoryId = category?.id || 3;
+      const groupId = group?.id;
       const productId = product.id;
       
       const imageUrl = groupId 
@@ -146,52 +198,93 @@ serve(async (req) => {
         : product.local_image_url || '/404_IMAGE_NOT_FOUND.png';
       
       // Find all unique variants for this product from the latest price map
-      const productVariantKeys = Array.from(latestPriceMap.keys()).filter(key => key.startsWith(`${product.id}_`));
-      const uniqueVariants = productVariantKeys.map(key => parseInt(key.split('_')[1]));
+      const productVariants = variantsByProduct.get(productIdNum);
+      const uniqueVariants = productVariants ? Array.from(productVariants.values()) : [];
+      uniqueVariants.sort((a, b) => a - b);
       
       if (uniqueVariants.length > 0) {
         for (const variantId of uniqueVariants) {
           // Get the latest price for THIS SPECIFIC variant from our map
-          const latestPrice = latestPriceMap.get(`${product.id}_${variantId}`);
+          const latestPrice = latestPriceMap.get(`${productIdNum}_${variantId}`);
           
-          const variantName = variantId === 1 ? 'Normal' : variantId === 2 ? 'Holofoil' : variantId === 3 ? 'Reverse Holofoil' : `Variant ${variantId}`;
+          const variantName = getVariantName(variantId);
+          const marketPrice = (latestPrice?.market_price || latestPrice?.low_price || 0) / 100;
+          const lowPrice = (latestPrice?.low_price || latestPrice?.market_price || 0) / 100;
           
           expandedResults.push({
-            ...product,
             id: createCompositeId(product.id, variantId),
+            setName: setName,
+            number: cardNumber,
+            localId: cardNumber,
+            currentPrice: marketPrice || lowPrice,
+            marketPrice: marketPrice,
+            ...product,
             image: imageUrl,
+            local_image_url: imageUrl,
             variantId,
             variantName,
+            set: {
+              id: setAbbr,
+              name: setName,
+            },
+            rarity: rarity?.name || 'Unknown',
             pricing: {
               variant: { id: variantId, name: variantName },
-              marketPrice: latestPrice?.market_price || 0,
+              marketPrice: marketPrice,
+              lowPrice: lowPrice,
+              midPrice: (latestPrice?.mid_price || 0) / 100,
+              highPrice: (latestPrice?.high_price || 0) / 100,
+              directLowPrice: (latestPrice?.direct_low_price || 0) / 100,
               lastUpdated: latestPrice?.recorded_at || new Date().toISOString()
             }
           });
         }
       } else {
         // Fallback for products with no pricing data
+        const fallbackVariantId = 1;
+        const fallbackVariantName = getVariantName(fallbackVariantId);
+
         expandedResults.push({
+          id: createCompositeId(product.id, fallbackVariantId),
+          setName: setName,
+          number: cardNumber,
+          localId: cardNumber,
+          currentPrice: 0,
+          marketPrice: 0,
           ...product,
-          id: createCompositeId(product.id, 1),
           image: imageUrl,
-          variantId: 1,
-          variantName: 'Normal',
+          local_image_url: imageUrl,
+          variantId: fallbackVariantId,
+          variantName: fallbackVariantName,
+          set: {
+            id: setAbbr,
+            name: setName,
+          },
+          rarity: rarity?.name || 'Unknown',
           pricing: {
-            variant: { id: 1, name: 'Normal' },
+            variant: { id: fallbackVariantId, name: fallbackVariantName },
             marketPrice: 0,
+            lowPrice: 0,
+            midPrice: 0,
+            highPrice: 0,
+            directLowPrice: 0,
             lastUpdated: new Date().toISOString()
           }
         });
       }
     }
 
+    // Calculate hasMore based on total count of products
+    const hasMore = (count || 0) > (page * limit);
+    const totalPages = Math.ceil((count || 0) / limit);
+
     return new Response(
       JSON.stringify({ 
         results: expandedResults,
-        totalResults: expandedResults.length,
+        totalResults: count || 0,
+        totalPages,
         page,
-        hasMore: expandedResults.length >= limit
+        hasMore
       }),
       {
         headers: { ...corsHeaders, "Content-Type": "application/json" },

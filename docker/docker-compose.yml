@@ -194,6 +194,7 @@ services:
       PGRST_DB_USE_LEGACY_GUCS: "false"
       PGRST_APP_SETTINGS_JWT_SECRET: ${JWT_SECRET}
       PGRST_APP_SETTINGS_JWT_EXP: ${JWT_EXPIRY}
+      PGRST_DB_POOL: ${PGRST_DB_POOL:-10}
     command:
       [
         "postgrest"
@@ -356,12 +357,46 @@ services:
       STRIPE_TEST_MODE: ${STRIPE_TEST_MODE}
       FRONTEND_URL: ${FRONTEND_URL}
       MCP_API_KEY: ${MCP_API_KEY}
+      RESEND_API_KEY: ${RESEND_API_KEY}
     command:
       [
         "start",
         "--main-service",
         "/home/deno/functions/main"
       ]
+
+  functions-mcp:
+    container_name: supabase-edge-functions-mcp
+    image: supabase/edge-runtime:v1.69.25
+    restart: unless-stopped
+    volumes:
+      - ./volumes/functions:/home/deno/functions:Z
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      analytics:
+        condition: service_healthy
+    environment:
+      JWT_SECRET: ${JWT_SECRET}
+      SUPABASE_URL: http://kong:8000
+      SUPABASE_ANON_KEY: ${ANON_KEY}
+      SUPABASE_SERVICE_ROLE_KEY: ${SERVICE_ROLE_KEY}
+      SUPABASE_DB_URL: postgresql://postgres:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}
+      VERIFY_JWT: "${FUNCTIONS_VERIFY_JWT}"
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET}
+      STRIPE_TEST_MODE: ${STRIPE_TEST_MODE}
+      FRONTEND_URL: ${FRONTEND_URL}
+      MCP_API_KEY: ${MCP_API_KEY}
+      RESEND_API_KEY: ${RESEND_API_KEY}
+    command:
+      [
+        "start",
+        "--main-service",
+        "/home/deno/functions/mcp-server"
+      ]
+    ports:
+      - "9001:9000"
 
   analytics:
     container_name: supabase-analytics
@@ -465,7 +500,9 @@ services:
         "-c",
         "config_file=/etc/postgresql/postgresql.conf",
         "-c",
-        "log_min_messages=fatal" # prevents Realtime polling queries from appearing in logs
+        "log_min_messages=fatal", # prevents Realtime polling queries from appearing in logs
+        "-c",
+        "max_connections=500"
       ]
 
   vector:

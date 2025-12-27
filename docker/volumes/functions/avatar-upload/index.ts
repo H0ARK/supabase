@@ -1,5 +1,6 @@
 // Avatar Upload Edge Function
 // Handles secure avatar uploads to Supabase Storage
+// Simplified version to debug 500 error and fix kong:8000 issue
 
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
@@ -62,22 +63,21 @@ Deno.serve(async (req) => {
       throw new Error('File size must be less than 5MB');
     }
 
-    // Create unique filename
-    const fileExt = file.name.split('.').pop();
-    const fileName = `${user.id}_${Date.now()}.${fileExt}`;
-    const filePath = `avatars/${user.id}/${fileName}`;
+    // Create filename: user UUID + original extension (overwrites existing)
+    const fileExt = file.name.split('.').pop() || 'jpg';
+    const filePath = `${user.id}.${fileExt}`;
 
     // Convert file to Uint8Array for upload
     const fileBuffer = await file.arrayBuffer();
     const fileUint8Array = new Uint8Array(fileBuffer);
 
-    // Upload file to Supabase Storage
+    // Upload file to Supabase Storage (upsert: true to overwrite)
     const { error: uploadError } = await supabaseClient.storage
       .from('avatars')
       .upload(filePath, fileUint8Array, {
         contentType: file.type,
         cacheControl: '3600',
-        upsert: false
+        upsert: true
       });
 
     if (uploadError) {
@@ -85,14 +85,24 @@ Deno.serve(async (req) => {
     }
 
     // Get public URL
-    const { data: { publicUrl } } = supabaseClient.storage
+    let { data: { publicUrl } } = supabaseClient.storage
       .from('avatars')
       .getPublicUrl(filePath);
+
+    // Fix for local development/internal networking issues (kong:8000)
+    // If the URL contains kong:8000, we replace it with the external domain
+    if (publicUrl.includes('kong:8000')) {
+      // We know the external domain is api.rippzz.com from the environment
+      publicUrl = publicUrl.replace('http://kong:8000', 'https://api.rippzz.com');
+    }
 
     // Update user profile
     const { error: updateError } = await supabaseClient
       .from('profiles')
-      .update({ avatar_url: publicUrl, updated_at: new Date().toISOString() })
+      .update({ 
+        avatar_url: publicUrl, 
+        updated_at: new Date().toISOString() 
+      })
       .eq('id', user.id);
 
     if (updateError) {
@@ -117,7 +127,7 @@ Deno.serve(async (req) => {
       JSON.stringify({ success: false, error: error.message }),
       {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        status: 400
+        status: 400 // Changed from 500 to 400 to see if it's a caught error
       }
     );
   }

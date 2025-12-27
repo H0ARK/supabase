@@ -40,7 +40,7 @@ mcp.tool('list_tables', {
         WHERE schemaname = 'public'
         ORDER BY tablename
       `)
-      
+
       const tables = result.rows.map(t => t.tablename).join(', ')
       return {
         content: [{ type: 'text', text: `Tables in public schema: ${tables}` }],
@@ -71,7 +71,7 @@ mcp.tool('get_table_schema', {
         FROM information_schema.columns
         WHERE table_schema = 'public' AND table_name = $1
       `, [args.table])
-      
+
       const json = JSON.stringify(result.rows, (key, value) =>
         typeof value === 'bigint' ? value.toString() : value, 2
       )
@@ -250,7 +250,7 @@ mcp.tool('list_functions', {
       }
       const response = await fetch(deployServerUrl, {
         method: 'POST',
-        headers: { 
+        headers: {
           'Content-Type': 'application/json',
           'X-MCP-Key': mcpApiKey
         },
@@ -284,13 +284,17 @@ mcp.tool('get_function_code', {
     name: z.string().describe('The name of the function'),
   }),
   handler: async (args: { name: string }) => {
+    console.log(`[mcp-server] Getting function code for: ${args.name}`)
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 60000)
     try {
       if (!mcpApiKey) {
         throw new Error('MCP_API_KEY is not configured')
       }
+      console.log(`[mcp-server] Calling deploy server at ${deployServerUrl}`)
       const response = await fetch(deployServerUrl, {
         method: 'POST',
-        headers: { 
+        headers: {
           'Content-Type': 'application/json',
           'X-MCP-Key': mcpApiKey
         },
@@ -303,21 +307,26 @@ mcp.tool('get_function_code', {
             arguments: args,
           },
         }),
+        signal: controller.signal,
       })
 
+      console.log(`[mcp-server] Deploy server responded with status: ${response.status}`)
       const result = await response.json()
+      console.log(`[mcp-server] Deploy server response body parsed`)
       if (result.error) throw new Error(result.error.message)
       return result.result
     } catch (error: any) {
+      console.error(`[mcp-server] Get function code error: ${error.message}`)
       return {
         content: [{ type: 'text', text: `Failed to get function code: ${error.message}` }],
         isError: true,
       }
+    } finally {
+      clearTimeout(timeoutId)
     }
   },
 })
 
-// Define a tool to delete an edge function
 mcp.tool('delete_function', {
   description: 'Delete a deployed edge function',
   inputSchema: z.object({
@@ -330,7 +339,7 @@ mcp.tool('delete_function', {
       }
       const response = await fetch(deployServerUrl, {
         method: 'POST',
-        headers: { 
+        headers: {
           'Content-Type': 'application/json',
           'X-MCP-Key': mcpApiKey
         },
@@ -373,7 +382,7 @@ mcp.tool('deploy_function', {
       console.log(`[mcp-server] Calling deploy server at ${deployServerUrl}`)
       const response = await fetch(deployServerUrl, {
         method: 'POST',
-        headers: { 
+        headers: {
           'Content-Type': 'application/json',
           'X-MCP-Key': mcpApiKey
         },
@@ -414,7 +423,7 @@ mcp.tool('restart_functions', {
       }
       const response = await fetch(deployServerUrl, {
         method: 'POST',
-        headers: { 
+        headers: {
           'Content-Type': 'application/json',
           'X-MCP-Key': mcpApiKey
         },
@@ -452,7 +461,7 @@ mcp.tool('deploy_server_health', {
       }
       const response = await fetch(deployServerUrl, {
         method: 'POST',
-        headers: { 
+        headers: {
           'Content-Type': 'application/json',
           'X-MCP-Key': mcpApiKey
         },
@@ -510,8 +519,25 @@ mcpApp.get('/', (c) => {
 })
 
 mcpApp.all('/mcp', async (c) => {
-  const response = await httpHandler(c.req.raw)
-  return response
+  console.log(`[mcp-server] Received MCP request: ${c.req.method} ${c.req.url}`)
+  try {
+    const response = await httpHandler(c.req.raw)
+    console.log(`[mcp-server] httpHandler produced response with status: ${response.status}`)
+
+    const text = await response.text()
+    if (!text) {
+      console.log(`[mcp-server] Response body is empty`)
+      return c.body(null, response.status)
+    }
+
+    console.log(`[mcp-server] Response body length: ${text.length}`)
+    return c.body(text, response.status, {
+      'Content-Type': 'application/json'
+    })
+  } catch (err: any) {
+    console.error(`[mcp-server] Error in /mcp handler: ${err.message}`)
+    return c.json({ error: err.message }, 500)
+  }
 })
 
 mcpApp.get('/health', (c) => {

@@ -15,13 +15,14 @@ products (ALL items: cards, sealed products, synthetic cards, everything)
 
 ## 📊 Current State Analysis
 
-### Products Tables (3 tables → 1 table)
+### Products Tables (2 tables → 1 table)
 | Table | Records | Size | Purpose | Status |
 |-------|---------|------|---------|--------|
-| **products** | 485,208 | 686 MB | Individual cards | ✅ **KEEP - Main table** |
-| synthetic_products | 22,562 | 28 MB | Generated/synthetic cards | ⚠️ **MERGE** |
+| **products** | 489,280 | 686 MB | All cards (TCGPlayer + Asian/Manual) | ✅ **KEEP - Main table** |
 | sealed_products | 2,645 | 7.8 MB | Booster boxes, packs, etc. | ⚠️ **MERGE** |
-| **TOTAL** | **510,415** | **722 MB** | | |
+| **TOTAL** | **491,925** | **694 MB** | | |
+
+*Note: `synthetic_products` has been deprecated. All non-TCGPlayer products are now integrated directly into the `products` table using a reserved ID range (starting at 100,000,000) to avoid conflicts with future TCGPlayer expansion.*
 
 ### Grouping Tables (3 tables → 1 table)
 | Table | Records | Size | Purpose | Status |

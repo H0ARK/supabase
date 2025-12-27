@@ -36,6 +36,23 @@ const TCGCSV_BASE_URL = 'https://tcgcsv.com';
 // Categories to skip (comics, not trading cards)
 const SKIP_CATEGORIES = [69, 70];
 
+// Groups to skip syncing (have bad published_on dates from TCGCSV)
+const SKIP_GROUP_SYNC = [
+  1423, // Nintendo Promos
+  1422, // POP Series 1
+  1447, // POP Series 2
+  1442, // POP Series 3
+  1452, // POP Series 4
+  1439, // POP Series 5
+  1432, // POP Series 6
+  1414, // POP Series 7
+  1450, // POP Series 8
+  1446, // POP Series 9
+  24529, // Player Placement Trainer Promos
+  1543, // EX Trainer Kit 1: Latias & Latios
+  1542, // EX Trainer Kit 2: Plusle & Minun
+];
+
 // Configuration
 const TCGCSV_DIR = process.env.TCGCSV_PATH || path.resolve(process.cwd(), 'tcgcsv');
 const LOG_FILE = path.join(process.cwd(), 'logs', `sync-products-${new Date().toISOString().split('T')[0]}.log`);
@@ -94,7 +111,7 @@ async function fetchWithRetry(url: string, retries = 3): Promise<any> {
       }
 
       const text = await response.text();
-      
+
       // Check for XML error responses
       if (text.trim().startsWith('<?xml') || text.trim().startsWith('<Error>')) {
         return null;
@@ -207,21 +224,21 @@ async function checkTcgcsvLastUpdated(): Promise<{ hasUpdates: boolean; lastUpda
       return { hasUpdates: true, lastUpdated: null };
     }
     const lastUpdated = (await response.text()).trim();
-    
+
     // Check our last sync time from the database or file
     const summaryPath = path.join(TCGCSV_DIR, 'product-sync-summary.json');
     try {
       const summary = JSON.parse(await fs.readFile(summaryPath, 'utf8'));
       const ourLastSync = new Date(summary.lastSync);
       const tcgcsvLastUpdate = new Date(lastUpdated);
-      
+
       if (tcgcsvLastUpdate <= ourLastSync && !FULL_SYNC) {
         return { hasUpdates: false, lastUpdated };
       }
     } catch {
       // No previous sync, proceed with sync
     }
-    
+
     return { hasUpdates: true, lastUpdated };
   } catch (error) {
     await log(`⚠️ Could not check TCGCSV last-updated: ${error}`);
@@ -232,16 +249,16 @@ async function checkTcgcsvLastUpdated(): Promise<{ hasUpdates: boolean; lastUpda
 // Fetch categories from TCGCSV
 async function fetchCategories(): Promise<any[]> {
   await log('📦 Fetching categories from TCGCSV...');
-  
+
   const data = await fetchWithRetry(`${TCGCSV_BASE_URL}/tcgplayer/categories`);
-  
+
   if (!data || !data.success || !Array.isArray(data.results)) {
     throw new Error('Failed to fetch categories');
   }
-  
+
   // Filter out skipped categories
   const categories = data.results.filter((cat: any) => !SKIP_CATEGORIES.includes(cat.categoryId));
-  
+
   await log(`✅ Found ${categories.length} categories (skipping ${SKIP_CATEGORIES.length} comic categories)`);
   return categories;
 }
@@ -249,22 +266,22 @@ async function fetchCategories(): Promise<any[]> {
 // Fetch groups for a category
 async function fetchGroups(categoryId: number): Promise<any[]> {
   const data = await fetchWithRetry(`${TCGCSV_BASE_URL}/tcgplayer/${categoryId}/groups`);
-  
+
   if (!data || !data.success || !Array.isArray(data.results)) {
     return [];
   }
-  
+
   return data.results;
 }
 
 // Fetch products for a group
 async function fetchProducts(categoryId: number, groupId: number): Promise<any[]> {
   const data = await fetchWithRetry(`${TCGCSV_BASE_URL}/tcgplayer/${categoryId}/${groupId}/products`);
-  
+
   if (!data || !data.success || !Array.isArray(data.results)) {
     return [];
   }
-  
+
   return data.results;
 }
 
@@ -280,12 +297,12 @@ async function getExistingProduct(productId: number): Promise<any | null> {
 // Sync a single product
 async function syncProduct(product: any, categoryId: number): Promise<'inserted' | 'updated' | 'skipped'> {
   const existingProduct = await getExistingProduct(product.productId);
-  
+
   // Check if product needs updating (by comparing modified_on)
   if (existingProduct && !FULL_SYNC) {
     const existingModified = existingProduct.modified_on ? new Date(existingProduct.modified_on) : null;
     const newModified = product.modifiedOn ? new Date(product.modifiedOn) : null;
-    
+
     // Skip if no changes
     if (existingModified && newModified && existingModified >= newModified) {
       return 'skipped';
@@ -381,7 +398,7 @@ async function syncProduct(product: any, categoryId: number): Promise<'inserted'
 // Sync categories to database
 async function syncCategories(categories: any[]) {
   await log('📦 Syncing categories...');
-  
+
   if (DRY_RUN) {
     await log(`[DRY RUN] Would sync ${categories.length} categories`);
     return;
@@ -437,6 +454,11 @@ async function syncGroups(groups: any[], categoryId: number) {
     await client.query('BEGIN');
 
     for (const group of groups) {
+      // Skip groups with known bad data from TCGCSV
+      if (SKIP_GROUP_SYNC.includes(group.groupId)) {
+        stats.groupsChecked++;
+        continue;
+      }
       await client.query(`
         INSERT INTO groups (
           id, category_id, name, abbreviation,
@@ -493,7 +515,7 @@ async function syncProducts() {
 
   // Check if TCGCSV has been updated
   const { hasUpdates, lastUpdated } = await checkTcgcsvLastUpdated();
-  
+
   if (!hasUpdates && !FULL_SYNC) {
     await log('✅ No updates from TCGCSV since last sync. Skipping.');
     return;
@@ -508,7 +530,7 @@ async function syncProducts() {
 
   // Fetch and sync categories
   let categories = await fetchCategories();
-  
+
   if (SPECIFIC_CATEGORY) {
     categories = categories.filter((cat: any) => cat.categoryId === SPECIFIC_CATEGORY);
     if (categories.length === 0) {
@@ -618,7 +640,7 @@ async function syncProducts() {
 
   // Final summary
   const elapsed = Math.round((Date.now() - stats.startTime) / 1000);
-  
+
   await log('');
   await log('╔════════════════════════════════════════════════════════╗');
   await log('║                    Sync Complete!                      ║');

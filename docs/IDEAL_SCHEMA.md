@@ -83,32 +83,32 @@ CREATE INDEX idx_set_groups_series ON set_groups(series_id) WHERE series_id IS N
 CREATE INDEX idx_set_groups_release ON set_groups(release_date);
 ```
 
-### Level 3: Products (Pointer Table)
+### Level 3: Products (Unified Table)
 ```sql
 CREATE TABLE products (
-    id BIGINT PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+    id BIGINT PRIMARY KEY, -- TCGPlayer IDs or Manual IDs (100M+ range)
     
     -- Classification
     category_id INTEGER NOT NULL REFERENCES categories(id),
     set_group_id INTEGER REFERENCES set_groups(id),
-    product_type TEXT NOT NULL, -- 'pokemon_card', 'magic_card', 'yugioh_card', 'sealed'
-    
-    -- Polymorphic Reference
-    source_table TEXT NOT NULL, -- 'pokemon_cards', 'magic_cards', 'yugioh_cards', 'sealed_products'
-    source_id BIGINT NOT NULL,  -- ID in the source table
+    product_type TEXT NOT NULL, -- 'card', 'sealed', 'bundle'
     
     -- Data Source Tracking
-    data_source TEXT, -- 'tcgplayer', 'tcgdex', 'pokemontcg_api', 'manual', 'collectr', etc.
-    source_product_id TEXT, -- External ID from the data source
-    is_verified BOOLEAN DEFAULT false,
-    verified_by UUID,
-    verified_at TIMESTAMPTZ
+    data_source TEXT, -- 'tcgplayer', 'cardtrader', 'pokemontcg_api', 'manual'
+    source_id TEXT,   -- External ID (e.g., TCGPlayer Product ID or CardTrader Blueprint ID)
     
-    -- Basic Info (denormalized for quick access)
+    -- CardTrader Integration
+    cardtrader_blueprint_id INTEGER,
+    
+    -- Basic Info
     name TEXT NOT NULL,
     clean_name TEXT,
     card_number TEXT,
     image_url TEXT,
+    
+    -- Properties (JSONB for game-agnostic attributes)
+    -- Mirrors CardTrader's fixed_properties
+    properties JSONB DEFAULT '{}'::jsonb,
     
     -- Market Data (denormalized)
     current_price NUMERIC(10,2),

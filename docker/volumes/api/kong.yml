@@ -260,8 +260,8 @@ services:
 
   ## MCP endpoint
   - name: mcp
-    _comment: 'MCP: /mcp -> http://functions-mcp:9000/mcp-server/mcp'
-    url: http://functions-mcp:9000/mcp-server/mcp
+    _comment: 'MCP: /mcp -> http://functions:9000/mcp-server/mcp'
+    url: http://functions:9000/mcp-server/mcp
     routes:
       - name: mcp
         strip_path: true
